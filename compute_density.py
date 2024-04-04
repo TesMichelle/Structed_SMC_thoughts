@@ -4,7 +4,7 @@ from tqdm import tqdm
 
 from interface import Matrix, state, lineage, densityTaTb, stateToNum, Mdim
 
-rho_values = np.linspace(0.001, 20, 80)
+rho_values = np.linspace(0.001, 20, 40)
 # 0, 1, 2, 3 => rho_i = 0, pop_a = 0, 1, 0, 1, pop_b = 0, 0, 1, 1
 rho_i = int(sys.argv[1]) // 4
 pop_a = int(sys.argv[1]) % 2
