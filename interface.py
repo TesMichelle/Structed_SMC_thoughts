@@ -3,7 +3,7 @@ from numpy import dot
 
 from scipy import linalg
 from scipy.integrate import odeint
-
+from tqdm import tqdm
 
 class MarginalDistr:
 
@@ -327,3 +327,41 @@ def densityTaTb_expm(Pinit, params, Ta, Tb, h, pop_a = -1, pop_b = -1):
         matrd, matrd2 = DoubleCoal(Ta, params, pop_a, pop_b)
         P = dot(matrd, P) + dot(matrd2, P) * h
     return P.sum()
+
+def compute_joint_smc(data_dx, rho_values):
+    Num_steps = rho_values*1000
+    delta_num_steps = np.append(Num_steps[0], Num_steps[1:] - Num_steps[:-1])
+    delta_num_steps = np.array(delta_num_steps, int)
+
+    dim = data_dx.shape[0]
+    row_sums = data_dx.sum(axis=1)
+    trans_matrix_smc = data_dx / np.where(row_sums[:, np.newaxis]>0, row_sums[:, np.newaxis], np.ones(dim))
+
+    marg_diagonal = np.zeros( (dim, dim) )
+    for i in range(dim):
+        marg_diagonal[i,i] = row_sums[i]/row_sums.sum() # margdist[i]
+
+    joint_smc = np.zeros((len(rho_values), *data_dx.shape))
+    joint_smc[0] = np.linalg.matrix_power(trans_matrix_smc, delta_num_steps[0])
+    for i in tqdm(range(1, joint_smc.shape[0])):
+        joint_smc[i] = joint_smc[i-1] @ np.linalg.matrix_power(trans_matrix_smc, delta_num_steps[i])
+    joint_smc = np.matmul(marg_diagonal, joint_smc)
+    return joint_smc
+
+def compute_TV(ddens1, ddens2):
+    TV = np.zeros(ddens1.shape[0])
+    dens_dif = np.zeros((ddens1.shape[0], ddens1.shape[1], ddens1.shape[1]))
+    for i in range(ddens1.shape[0]):
+        dens_dif[i] = ddens1[i]/ddens1[i].sum()-ddens2[i]/ddens2[i].sum()
+        TV[i] = np.sum(abs(dens_dif[i]))*0.5
+    return TV
+
+def block_pop(rho_m, dim, dt):
+    temp_dens = np.zeros((4, dim, dim))
+    c = 0
+    for pop_b in [0, 1]:
+        for pop_a in [0, 1]:
+            temp_dens[c] = np.load(f'eq_mig=0.1_pop_a={pop_a}_pop_b={pop_b}_rho_m={rho_m}_{dim}_{dt}.npy')
+            c += 1
+    data_dx = np.block([[temp_dens[0], temp_dens[1]], [temp_dens[2], temp_dens[3]]])
+    return data_dx
