@@ -282,26 +282,27 @@ def solve_eq2(params, times, Pinit):
 
 def densityTaTb(method, Pinit, params, Ta, Tb, h, pop_a = -1, pop_b = -1):
     if method == 'ode':
-        return densityTaTb_ode(Pinit, params, Ta, Tb, pop_a=pop_a, pop_b=pop_b)
+        return densityTaTb_ode(Pinit, params, Ta, Tb, h, pop_a=pop_a, pop_b=pop_b)
     else:
         return densityTaTb_expm(Pinit, params, Ta, Tb, h, pop_a=pop_a, pop_b=pop_b)
 
-def densityTaTb_ode(Pinit, params, Ta, Tb, pop_a = -1, pop_b = -1):
+def densityTaTb_ode(Pinit, params, Ta, Tb, h, pop_a = -1, pop_b = -1):
     if Ta < Tb:
         P = solve_eq(params, [0., Ta], Pinit)
         P = dot(FirstCoal('a', Ta, params, pop_a), P)
 
         P = solve_eq(params, [Ta, Tb], P)
-        P = dot(SecondCoal('b', Tb, params, pop_b), P)
+        P = dot(SecondCoal('b', Tb, params, pop_b), P) * h
     elif Ta > Tb:
         P = solve_eq(params, [0., Tb], Pinit)
         P = dot(FirstCoal('b', Tb, params, pop_b), P)
 
         P = solve_eq(params, [Tb, Ta], P)
-        P = dot(SecondCoal('a', Ta, params, pop_a), P)
+        P = dot(SecondCoal('a', Ta, params, pop_a), P) * h
     else:
         P = solve_eq(params, [0, Ta], Pinit)
-        P = dot(DoubleCoal(Ta, params, pop_a, pop_b), P)
+        matrd, matrd2 = DoubleCoal(Ta, params, pop_a, pop_b)
+        P = dot(matrd, P) + dot(matrd2, P) * h
     return( sum(P) )
 
 # вставил домножение на шаг по времени внутрь функции, изменил саму фкнцию немного
@@ -313,14 +314,14 @@ def densityTaTb_expm(Pinit, params, Ta, Tb, h, pop_a = -1, pop_b = -1):
         P = dot(FirstCoal('a', Ta, params, pop_a), P)
         Mexp = linalg.expm( dot(M, params(0))*(Tb-Ta) )
         P = dot(Mexp, P)
-        P = dot(SecondCoal('b', Tb, params, pop_b), P) *h
+        P = dot(SecondCoal('b', Tb, params, pop_b), P) * h
     elif Ta > Tb:
         Mexp = linalg.expm( dot(M, params(0))*Tb )
         P = dot(Mexp, Pinit)
         P = dot(FirstCoal('b', Tb, params, pop_b), P)
         Mexp = linalg.expm( dot(M, params(0))*(Ta-Tb) )
         P = dot(Mexp, P)
-        P = dot(SecondCoal('a', Ta, params, pop_a), P) *h
+        P = dot(SecondCoal('a', Ta, params, pop_a), P) * h
     else:
         Mexp = linalg.expm( dot(M, params(0))*Ta )
         P = dot(Mexp, Pinit)
@@ -356,12 +357,37 @@ def compute_TV(ddens1, ddens2):
         TV[i] = np.sum(abs(dens_dif[i]))*0.5
     return TV
 
-def block_pop(rho_m, dim, dt):
+def block_pop(m1, m2, rho_m, dim, dt):
     temp_dens = np.zeros((4, dim, dim))
     c = 0
-    for pop_b in [0, 1]:
-        for pop_a in [0, 1]:
-            temp_dens[c] = np.load(f'eq_mig=0.1_pop_a={pop_a}_pop_b={pop_b}_rho_m={rho_m}_{dim}_{dt}.npy')
+    for pop_a in [0, 1]:
+        for pop_b in [0, 1]:
+            temp_dens[c] = np.load(f'm1={m1}_m2={m2}_pop_a={pop_a}_pop_b={pop_b}_rho_m={rho_m}_{dim}_{dt}.npy')
             c += 1
     data_dx = np.block([[temp_dens[0], temp_dens[1]], [temp_dens[2], temp_dens[3]]])
     return data_dx
+
+indexes = [[[], []], [[], []]]
+for st in states:
+    if st.num['b'] == 2:
+        i = st.lng[st.index['b'][0]].p
+        j = st.lng[st.index['b'][1]].p
+        indexes[i][j].append(stateToNum[st.n])
+
+def compute_cov(joint_dens):
+    n = dens.shape[1]
+    dens1 = joint_dens[i].sum(axis=1)
+    dens2 = joint_dens[i].sum(axis=2)
+    T_vals = np.linspace(0, T_max, n+1)[:-1]
+    TS = T_vals.reshape(n, -1) @ T_vals.reshape(-1, n)
+    return (TS * dens).sum(axis=(1, 2)) - (T_vals*dens1).sum(axis=1)*(T_vals*dens2).sum(axis=1)
+
+def densityAbAb(Pinit, params, Ta):
+    Mexp = linalg.expm( dot(M, params(0))*Ta ) # (M, params) = good transition matrix, MAGIC!!!!!
+    P = dot(Mexp, Pinit)
+    P = dot(FirstCoal('a', Ta, params), P)
+    prob = np.zeros((2, 2))
+    for i in range(2):
+        for j in range(2):
+            prob[i, j] = P[indexes[i][j]].sum()
+    return prob/P.sum(), P.sum()
